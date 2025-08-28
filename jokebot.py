@@ -194,6 +194,12 @@ def start_keepalive_server() -> None:
     Thread(target=server.serve_forever, daemon=True).start()
 
 
+
+async def main_async() -> None:
+    api_id = 28972334
+    api_hash = "d8e3e17284d08d122f17e64d8699c4c2"
+=======
+
 async def main_async() -> None:
     api_id = int(os.environ.get("TELEGRAM_API_ID", "0"))
     api_hash = os.environ.get("TELEGRAM_API_HASH")
@@ -201,6 +207,7 @@ async def main_async() -> None:
         raise RuntimeError(
             "Установите TELEGRAM_API_ID и TELEGRAM_API_HASH для MTProto клиента."
         )
+
 
     session = os.environ.get("TELEGRAM_SESSION", "jokebot")
     client = TelegramClient(session, api_id, api_hash)
