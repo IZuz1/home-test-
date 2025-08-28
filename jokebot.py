@@ -196,11 +196,6 @@ def start_keepalive_server() -> None:
 
 
 async def main_async() -> None:
-    api_id = 28972334
-    api_hash = "d8e3e17284d08d122f17e64d8699c4c2"
-=======
-
-async def main_async() -> None:
     api_id = int(os.environ.get("TELEGRAM_API_ID", "0"))
     api_hash = os.environ.get("TELEGRAM_API_HASH")
     if not api_id or not api_hash:
