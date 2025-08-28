@@ -4,6 +4,8 @@ import random
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict
+from threading import Thread
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
 import feedparser
@@ -135,6 +137,20 @@ async def joke_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     joke = await get_fresh_joke()
     await update.message.reply_text(joke["text"] if joke else "Пока нет анекдотов — попробуйте позже.", disable_web_page_preview=True)
 
+
+def start_keepalive_server() -> None:
+    """Start a tiny HTTP server so the platform detects an open port."""
+    port = int(os.environ.get("PORT", 8000))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+
 def main():
     token = os.environ.get("TELEGRAM_TOKEN")
     if not token:
@@ -154,6 +170,7 @@ def main():
         name="hourly_jokes"
     )
 
+    start_keepalive_server()
     print("Bot is running. Press Ctrl+C to stop.")
     app.run_polling(close_loop=False)
 
