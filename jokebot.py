@@ -14,11 +14,18 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 SUBS_FILE = "subscribers.json"
 SEEN_FILE = "seen_items.json"
+NEWS_SEEN_FILE = "seen_news.json"
 
 FEEDS = [
     "https://www.anekdot.ru/rss/export20.xml",
     "https://www.anekdot.ru/rss/export_j.xml",
     "https://www.anekdot.ru/rss/export_j_non_burning.xml",
+]
+
+NEWS_FEEDS = [
+    "https://lenta.ru/rss/news",
+    "https://rssexport.rbc.ru/rbcnews/news/30/full.rss",
+    "https://tass.ru/rss/v2.xml",
 ]
 
 USER_AGENT = "TelegramJokeBot/1.0 (+https://www.anekdot.ru/)"
@@ -49,6 +56,13 @@ def load_seen() -> set[str]:
 
 def save_seen(seen: set[str]) -> None:
     save_json(SEEN_FILE, {"ids": sorted(seen)})
+
+def load_news_seen() -> set[str]:
+    data = load_json(NEWS_SEEN_FILE, {"ids": []})
+    return set(data.get("ids", []))
+
+def save_news_seen(seen: set[str]) -> None:
+    save_json(NEWS_SEEN_FILE, {"ids": sorted(seen)})
 
 def seconds_until_next_top_of_hour() -> float:
     now = datetime.now(timezone.utc)
@@ -95,6 +109,39 @@ async def get_fresh_joke() -> Dict | None:
 
     return None
 
+async def get_fresh_news() -> Dict | None:
+    seen = load_news_seen()
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}) as client:
+        tasks = [fetch_feed(client, url) for url in NEWS_FEEDS]
+        buckets = await asyncio.gather(*tasks)
+        items = [it for bucket in buckets for it in bucket]
+
+    random.shuffle(items)
+
+    for it in items:
+        if it["id"] not in seen:
+            seen.add(it["id"])
+            save_news_seen(seen)
+            text = f"{it['text']}\n\nИсточник: {it['link']}"
+            return {"text": text}
+
+    if items:
+        it = random.choice(items)
+        text = f"{it['text']}\n\nИсточник: {it['link']}"
+        return {"text": text}
+
+    return None
+
+async def send_news_to_chat(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    news = await get_fresh_news()
+    if not news:
+        await context.bot.send_message(chat_id=chat_id, text="Пока нет новостей — попробуйте позже.")
+        return
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=news["text"], disable_web_page_preview=True)
+    except Exception as e:
+        print(f"Failed to send news to {chat_id}: {e}")
+
 async def send_joke_to_chat(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     joke = await get_fresh_joke()
     if not joke:
@@ -112,6 +159,7 @@ async def hourly_broadcast(context: ContextTypes.DEFAULT_TYPE) -> None:
     subs_list = list(subs)
     random.shuffle(subs_list)
     for chat_id in subs_list:
+        await send_news_to_chat(context, chat_id)
         await send_joke_to_chat(context, chat_id)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -119,8 +167,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     subs.add(update.effective_chat.id)
     save_subscribers(subs)
     await update.message.reply_text(
-        "Привет! Шлю короткий анекдот каждый час из RSS Anekdot.ru.\n"
-        "Команды: /joke — шутка сейчас, /stop — отписаться."
+        "Привет! Шлю анекдот и новость каждый час из российских RSS.\n"
+        "Команды: /joke — шутка сейчас, /news — новость сейчас, /stop — отписаться."
     )
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -136,6 +184,10 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def joke_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     joke = await get_fresh_joke()
     await update.message.reply_text(joke["text"] if joke else "Пока нет анекдотов — попробуйте позже.", disable_web_page_preview=True)
+
+async def news_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    news = await get_fresh_news()
+    await update.message.reply_text(news["text"] if news else "Пока нет новостей — попробуйте позже.", disable_web_page_preview=True)
 
 
 def start_keepalive_server() -> None:
@@ -161,13 +213,14 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("joke", joke_now))
+    app.add_handler(CommandHandler("news", news_now))
 
     first_run = seconds_until_next_top_of_hour()
     app.job_queue.run_repeating(
         hourly_broadcast,
         interval=3600,
         first=first_run,
-        name="hourly_jokes"
+        name="hourly_updates"
     )
 
     start_keepalive_server()
